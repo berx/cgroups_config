@@ -10,7 +10,7 @@ All processes which matches any of the patterns in "processes" are added to the 
 
 This implementation is absed on cgroups v1.
 
-A description can be found (here)[https://berxblog.blogspot.com/2019/03/limit-ios-by-instances.html].
+A description can be found [here](https://berxblog.blogspot.com/2019/03/limit-ios-by-instances.html).
 
 # requirements
 
@@ -19,7 +19,7 @@ A description can be found (here)[https://berxblog.blogspot.com/2019/03/limit-io
 * for each **subsystem** a dedicated directory "myroot" must exist and writable by the user who is running cgc.
 
 ## jq
-to parse the config file (jq)[https://stedolan.github.io/jq/] is required. 
+to parse the config file [jq](https://stedolan.github.io/jq/) is required. 
 
 ## GET_DEVICES
 a program which translates a disk as it's given by *select path from v$asm_disk* into real device names. 
