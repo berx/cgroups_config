@@ -1,0 +1,36 @@
+{
+  "base": "/sys/fs/cgroup",
+  "myroot": "ORACLE",
+  "subsystems": [
+    "blkio"
+  ],
+  "groups": [
+    {
+      "name": "BX1",
+      "diskgroup": "DG1",
+      "subsystems": [
+        {
+          "subsystem": "blkio",
+          "limits": [
+            {
+              "file": "blkio.throttle.read_bps_device",
+              "limit": 5242880
+            },
+            {
+              "file": "blkio.throttle.read_iops_device",
+              "limit": 3000
+            }
+          ]
+        }
+      ],
+      "processes": [
+        "ora_p[[:digit:]].{2}_BXSR01",
+        "BXSR01.*LOCAL=NO"
+      ]
+    },
+    {
+      "name": "BEKOPA1"
+    }
+  ]
+}
+

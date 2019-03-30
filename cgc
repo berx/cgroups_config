@@ -1,0 +1,258 @@
+#!/bin/bash
+#============================================================================
+# Title       : cgc
+# Description : Set r/w IOPS limits on ASM diskgroups & add processes to cgroups
+# Version     : 1.0
+# Author      : Martin Berger <martin.a.berger@gmail.com>
+# based on an idea of Bart Sjerps <bart@outrun.nl>
+# License     : GPLv3+
+# ---------------------------------------------------------------------------
+# Revision history:
+# 2019-03-26 : First version
+# ---------------------------------------------------------------------------
+
+die()    { echo "$(basename $0): [die] $@" >&2 ; exit 10 ; }
+quit()   { echo "$(basename $0): [quit] $@"    ; exit 0 ; }
+msg()    { echo "$(basename $0): [msg] $@" ; }
+debug () { [ $_DEBUG -gt 0 ] && (>&2 echo "$(basename $0): DEBUG: $1 $in_pipe") }
+
+#============================================================================
+# Configuration parameters:
+# ---------------------------------------------------------------------------
+_DEBUG=0
+JQ=$(which jq 2>>/dev/null)
+ret=$?
+[[ $ret -gt 0 ]] && JQ=$(dirname $0)/jq
+CONF=$(dirname $0)/cgconfig.json
+GET_DEVICES="./get_real_device"
+GET_DEVICES_PARAMETERS=" -d -S "
+all_groups=-1
+process_diskgroups=0
+process_processes=0
+something_todo=0
+
+#============================================================================
+# Initialization - Logging - Etc.
+# ---------------------------------------------------------------------------
+declare -a disks
+cleanup() {
+  test -f /tmp/query.sql && /bin/rm /tmp/query.sql
+}
+trap cleanup EXIT INT TERM HUP
+
+# ---------------------------------------------------------------------------
+# Functions
+# --------------------------------------------------------------------------- 
+
+# ---------------------------------------------------------------------------
+# read CGROUP_BASE, CGROUP_MYROOT, subsystems_count, subsystens, groups
+# and checks if CGROUP_BASE/subsystem/CGROUP_MYROOT can be used
+
+read_main() {
+  [[ -f $CONF ]] || die "Config file $CONF not found."
+  CGROUP_BASE=`$JQ -r .base $CONF`
+  debug "CGROUP_BASE: $CGROUP_BASE"
+  CGROUP_MYROOT=`$JQ -r .myroot $CONF`
+  subsystems_count=`$JQ -r '.subsystems|length' $CONF`
+  subsystems=`$JQ -r  '.subsystems| .[]' $CONF `
+  debug "subsystems: $subsystems"
+  for (( i=0 ; i<$subsystems_count ; i++ ))
+  do 
+    debug "i: $i"
+    subsystem=`$JQ -r ".subsystems|.[$i]" $CONF`
+    debug "subsystem: $subsystem"
+    [[ -d $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT does not exist"
+    [[ -w $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT is not writable"
+  done
+  groups=` $JQ -r ".groups | .[] |  .name" $CONF`
+}
+
+# ---------------------------------------------------------------------------
+# get processes for a given group ( $1 )
+get_processes() {
+  local group=$1
+  patterns=`$JQ -r ".groups | .[] | select(.name == \"$group\").processes | .[]" $CONF 2>/dev/null`
+  [[ "-$patterns-" == "--" ]] && die "no process pattern found for group $group"
+  debug "patterns: $patterns"
+
+}
+
+
+# ---------------------------------------------------------------------------
+# sets global variables "devicecount" & "devices" for a given Diskgroup [ $1 ]
+get_devices() {
+  local diskgroup=$1
+  disks=""
+  devices=""
+  devicecount=0
+  local ORACLE_SID=`ps -eo cmd | grep -v awk | awk -F_ ' /mmon_.ASM/ { print $3 } '`
+  debug "ORACLE_SID: $ORACLE_SID"
+  local prev_oraenv_ask=$ORAENV_ASK
+  ORAENV_ASK="NO"
+  . oraenv #>/dev/null
+  ORAENV_ASK=$prev_oraenv_ask
+  debug "ORACLE_SID: $ORACLE_SID"
+  debug "pre asm-disks: asmcmd lsdsk -k -G $diskgroup | awk ' { print  $10 }' "
+  asm_disks=$(asmcmd lsdsk --suppressheader -k -G $diskgroup | awk ' { print  $10 }' )
+  debug "asm_disks: $asm_disks"
+  devices=$(for asm_disk in $asm_disks ; do $GET_DEVICES $GET_DEVICES_PARAMETERS $asm_disk; done )
+  debug "devices: $devices"
+  devicecount=$(echo $devices | wc -w)
+  debug "devicecount: $devicecount"
+  
+}
+
+# ---------------------------------------------------------------------------
+# set limits
+# $1 <= subsystem
+# $2 <= group
+# $3 <= file
+# $4 <= limit
+# global variables decices % devicescount are used
+set_limit() {
+  local reduced_limit=$(($4/$devicecount))
+  local device=""
+  [[ -d $CGROUP_BASE/$1/$CGROUP_MYROOT/$2 ]] || mkdir $CGROUP_BASE/$1/$CGROUP_MYROOT/$2 || die "can not create directory $CGROUP_BASE/$1/$CGROUP_MYROOT/$2"
+  for device in $devices ; 
+  do
+    debug "echo $(mami $device) $reduced_limit >$CGROUP_BASE/$1/$CGROUP_MYROOT/$2/$3"
+    echo $(mami $device) $reduced_limit >$CGROUP_BASE/$1/$CGROUP_MYROOT/$2/$3
+  done
+
+}
+
+# ---------------------------------------------------------------------------
+# returns <MAJOR>:<MINOR> device ID for a given device
+mami() {
+  echo "$((`stat -c "16#%t" /dev/$1`)):$((`stat -c "16#%T" /dev/$1`))"
+}
+
+join_awk_pattern() {
+  while [ $# -gt 1 ]
+  do
+    echo -n "/$1/ || "
+    shift
+  done
+  echo -n "/$1/"
+}
+
+# ---------------------------------------------------------------------------
+#
+usage() {
+  cat <<- EOF
+    $(basename $0) [-?] [-C config_file] [-G group_name]|[-a] [-d] [-p]
+      -?            - this page
+      -C            - specify the config_file to be used
+      -G            - specify the group_name which wil lbe processed
+      -a            - all groups
+      -d            - process limits for the diskgroup(s) (depending on -G|-a)
+      -p            - process processes filters (depending on -G|-a)
+
+    $(basename $0) sets cgroups limits for a given "group" and assign processes 
+    based on patterns to this cgroup. 
+    A well formatted config file is required.
+
+EOF
+exit
+}
+
+#============================================================================
+# Main section - parsing options etc
+# ---------------------------------------------------------------------------
+while getopts "C:DG:adp?" OPT; do
+  case "$OPT" in
+    C) CONF=$OPTARG ;;
+    D) _DEBUG=1 ;;
+    G) group=$OPTARG ; all_groups=0  ;;
+    a) all_groups=1  ;;
+    d) process_diskgroups=1 ;;
+    p) process_processes=1 ;;
+    ?) usage ; exit 0 ;;
+  esac
+done
+shift $(($OPTIND-1))
+ACTION=$1; shift
+
+
+read_main
+
+if [[ $all_groups -eq 0 ]] 
+then
+  exists=0
+  for  g in $groups ;
+  do 
+    [[ $g == $group ]] && exists=1
+  done
+  [[ $exists -eq 0 ]] && die "could not find group $group in $CONF"
+  groups=$group
+else
+  [[ $all_groups -eq 1 ]] || die "parameter -G or -a is required"
+  [[ "-${group}-" == "--" ]] || die "-G and -a at the same time doesn't make sense"
+fi
+
+
+for group in $groups ;
+do
+  debug "group: $group"
+  if [[ $process_diskgroups -eq 1 ]] 
+  then
+    something_todo=1
+
+  # get DG 
+  diskgroup=`$JQ -r ".groups | .[] | select(.name == \"$group\") | .diskgroup" $CONF `
+  debug "diskgroup: $diskgroup"
+  [[ $diskgroup == "null" ]] && die "diskgroup is not set for group $group"
+  get_devices $diskgroup
+  # get subsystems
+  subsystems=`$JQ -r ".groups | .[] | select(.name == \"$group\") | .subsystems | .[].subsystem" $CONF`
+  [[ $subsystems == "null" ]] && die "at least one subsystem must be defined for group $group"
+  # for each subsystem
+  for subsystem in $subsystems ;
+  do
+    debug "subsystem: $subsystem"
+    # get lmits
+    limit_files=`$JQ -r ".groups | .[] | select(.name == \"$group\") | .subsystems | .[]| select(.subsystem == \"$subsystem\") | .limits | .[] | .file" $CONF`
+    debug "limit_files: $limit_files"
+    for file in $limit_files ;
+    do
+      debug "file: $file"
+    # for each limit
+      limit=`$JQ -r ".groups | .[] | select(.name == \"$group\") | .subsystems | .[]| select(.subsystem == \"$subsystem\") | .limits | .[] | select( .file == \"$file\" ) | .limit" $CONF`
+      debug "limit: $limit"
+      # set limit
+      set_limit $subsystem $group $file $limit
+    done
+  done
+
+# set limits
+# $1 <= subsystem
+# $2 <= file
+# $3 <= limit
+
+  fi
+
+  if [[ $process_processes -eq 1 ]]
+  then
+    something_todo=1
+    # get patterns
+    get_processes $group
+    # generate list
+    pattern=$( join_awk_pattern $patterns )
+    debug "awk-pattern: $pattern"
+
+    # get processes
+    processes=`ps -eo pid,cmd | grep -v awk | awk " $pattern { print \\$1 } "`
+    # add processes to "tasks" 
+    debug "processes: $processes"
+    for process in $processes ;
+    do
+      debug "process: echo $process > $CGROUP_BASE/$subsystem/$CGROUP_MYROOT/$group/tasks  "
+      echo $process > $CGROUP_BASE/$subsystem/$CGROUP_MYROOT/$group/tasks  
+ 
+    done
+
+  fi
+
+  [[ $something_todo -eq 1 ]] || msg "diskgroup $group - nothing to do"
+
+done
