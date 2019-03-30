@@ -89,7 +89,7 @@ get_devices() {
   debug "ORACLE_SID: $ORACLE_SID"
   local prev_oraenv_ask=$ORAENV_ASK
   ORAENV_ASK="NO"
-  . oraenv #>/dev/null
+  . /usr/local/bin/oraenv #>/dev/null
   ORAENV_ASK=$prev_oraenv_ask
   debug "ORACLE_SID: $ORACLE_SID"
   debug "pre asm-disks: asmcmd lsdsk -k -G $diskgroup | awk ' { print  $10 }' "
