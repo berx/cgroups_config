@@ -5,10 +5,12 @@
 # Version     : 1.0
 # Author      : Martin Berger <martin.a.berger@gmail.com>
 # based on an idea of Bart Sjerps <bart@outrun.nl>
+# repository  : https://github.com/berx/cgroups_config 
 # License     : GPLv3+
 # ---------------------------------------------------------------------------
 # Revision history:
 # 2019-03-26 : First version
+# 2019-04-02 : add option -l to list current limits
 # ---------------------------------------------------------------------------
 
 die()    { echo "$(basename $0): [die] $@" >&2 ; exit 10 ; }
@@ -30,6 +32,7 @@ all_groups=-1
 process_diskgroups=0
 process_processes=0
 something_todo=0
+list_limits=0
 
 #============================================================================
 # Initialization - Logging - Etc.
@@ -90,7 +93,7 @@ get_devices() {
   local prev_oraenv_ask=$ORAENV_ASK
   ORAENV_ASK="NO"
   PATH=$PATH:/usr/local/bin/
-  . /usr/local/bin/oraenv #>/dev/null
+  . /usr/local/bin/oraenv >/dev/null
   ORAENV_ASK=$prev_oraenv_ask
   debug "ORACLE_SID: $ORACLE_SID"
   debug "pre asm-disks: asmcmd lsdsk -k -G $diskgroup | awk ' { print  $10 }' "
@@ -123,6 +126,14 @@ set_limit() {
 }
 
 # ---------------------------------------------------------------------------
+# same parameters like set_limit() above
+show_limit() {
+#  printf "%20s: %10s: %40s %16d \n" "group" "subsystem" "blkio.throttle.read_iops_device" 1234
+  printf "%-20s %-10s %-40s %16d\n" $2 $1 $3 $4
+
+
+}
+# ---------------------------------------------------------------------------
 # returns <MAJOR>:<MINOR> device ID for a given device
 mami() {
   echo "$((`stat -c "16#%t" /dev/$1`)):$((`stat -c "16#%T" /dev/$1`))"
@@ -141,12 +152,13 @@ join_awk_pattern() {
 #
 usage() {
   cat <<- EOF
-    $(basename $0) [-?] [-C config_file] [-G group_name]|[-a] [-d] [-p]
+    $(basename $0) [-?] [-C config_file] [-G group_name]|[-a] [-d] [-l] [-p] 
       -?            - this page
       -C            - specify the config_file to be used
       -G            - specify the group_name which wil lbe processed
       -a            - all groups
       -d            - process limits for the diskgroup(s) (depending on -G|-a)
+      -l            - list limits 
       -p            - process processes filters (depending on -G|-a)
 
     $(basename $0) sets cgroups limits for a given "group" and assign processes 
@@ -160,13 +172,14 @@ exit
 #============================================================================
 # Main section - parsing options etc
 # ---------------------------------------------------------------------------
-while getopts "C:DG:adp?" OPT; do
+while getopts "C:DG:adlp?" OPT; do
   case "$OPT" in
     C) CONF=$OPTARG ;;
     D) _DEBUG=1 ;;
     G) group=$OPTARG ; all_groups=0  ;;
     a) all_groups=1  ;;
     d) process_diskgroups=1 ;;
+    l) list_limits=1 ;;
     p) process_processes=1 ;;
     ?) usage ; exit 0 ;;
   esac
@@ -195,7 +208,7 @@ fi
 for group in $groups ;
 do
   debug "group: $group"
-  if [[ $process_diskgroups -eq 1 ]] 
+  if [[ $process_diskgroups -eq 1 ]]  || [[ $list_limits -eq 1 ]]
   then
     something_todo=1
 
@@ -221,7 +234,8 @@ do
       limit=`$JQ -r ".groups | .[] | select(.name == \"$group\") | .subsystems | .[]| select(.subsystem == \"$subsystem\") | .limits | .[] | select( .file == \"$file\" ) | .limit" $CONF`
       debug "limit: $limit"
       # set limit
-      set_limit $subsystem $group $file $limit
+      [[ $process_diskgroups -eq 1 ]]  && set_limit $subsystem $group $file $limit
+      [[ $list_limits -eq 1 ]]         && show_limit $subsystem $group $file $limit
     done
   done
 
@@ -230,7 +244,7 @@ do
 # $2 <= file
 # $3 <= limit
 
-  fi
+  fi  
 
   if [[ $process_processes -eq 1 ]]
   then
@@ -253,6 +267,7 @@ do
     done
 
   fi
+
 
   [[ $something_todo -eq 1 ]] || msg "diskgroup $group - nothing to do"
 

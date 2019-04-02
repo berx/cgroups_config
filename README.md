@@ -88,12 +88,13 @@ It contains 2 sections, a kind of "header" where global settings are defined, an
 
 ## options
 
-    cgc [-?] [-C config_file] [-G group_name]|[-a] [-d] [-p]
+    cgc [-?] [-C config_file] [-G group_name]|[-a] [-d] [-l] [-p] 
       -?            - this page
       -C            - specify the config_file to be used
       -G            - specify the group_name which wil lbe processed
       -a            - all groups
       -d            - process limits for the diskgroup(s) (depending on -G|-a)
+	  -l            - list limits 
       -p            - process processes filters (depending on -G|-a)
 
     cgc sets cgroups limits for a given "group" and assign processes 
