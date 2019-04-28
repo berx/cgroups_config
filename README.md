@@ -16,7 +16,7 @@ A description can be found [here](https://berxblog.blogspot.com/2019/03/limit-io
 
 ## cgroups filesystem
 * a proper cgroups mountpoint must exist. ("base" in cgconfig.json)
-* for each **subsystem** a dedicated directory "myroot" must exist and writable by the user who is running cgc.
+* the user must be able to run *sudo* to create and chown the proper directories, or for each **subsystem** a dedicated directory "myroot" must exist and writable by the user who is running cgc.
 
 ## jq
 to parse the config file [jq](https://stedolan.github.io/jq/) is required. 

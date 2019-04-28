@@ -2,7 +2,7 @@
 #============================================================================
 # Title       : cgc
 # Description : Set r/w IOPS limits on ASM diskgroups & add processes to cgroups
-# Version     : 1.0
+# Version     : 1.1
 # Author      : Martin Berger <martin.a.berger@gmail.com>
 # based on an idea of Bart Sjerps <bart@outrun.nl>
 # repository  : https://github.com/berx/cgroups_config 
@@ -11,6 +11,8 @@
 # Revision history:
 # 2019-03-26 : First version
 # 2019-04-02 : add option -l to list current limits
+# 2019-04-28 : berx - 1.1 - added "sudo" selfservice to create directory & 
+#                                                       change permissions
 # ---------------------------------------------------------------------------
 
 die()    { echo "$(basename $0): [die] $@" >&2 ; exit 10 ; }
@@ -28,6 +30,8 @@ ret=$?
 CONF=$(dirname $0)/cgconfig.json
 GET_DEVICES="$(dirname $0)/get_real_device"
 GET_DEVICES_PARAMETERS=" -d -S "
+SUDO="/usr/bin/sudo"
+SUDO_PARAMETERS=""
 all_groups=-1
 process_diskgroups=0
 process_processes=0
@@ -64,8 +68,8 @@ read_main() {
     debug "i: $i"
     subsystem=`$JQ -r ".subsystems|.[$i]" $CONF`
     debug "subsystem: $subsystem"
-    [[ -d $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT does not exist"
-    [[ -w $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT is not writable"
+    [[ -d $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || $SUDO $SUDO_PARAMETERS "mkdir $CGROUP_BASE/$subsystem/$CGROUP_MYROOT" || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT does not exist"
+    [[ -w $CGROUP_BASE/$subsystem/$CGROUP_MYROOT ]] || $SUDO $SUDO_PARAMETERS "chown $(id -u -n ) $CGROUP_BASE/$subsystem/$CGROUP_MYROOT" || die "cgroup subsystem root directory $CGROUP_BASE/$subsystem/$CGROUP_MYROOT is not writable"
   done
   groups=` $JQ -r ".groups | .[] |  .name" $CONF`
 }
@@ -158,7 +162,7 @@ usage() {
       -G            - specify the group_name which wil lbe processed
       -a            - all groups
       -d            - process limits for the diskgroup(s) (depending on -G|-a)
-      -l            - list limits 
+	  -l            - list limits 
       -p            - process processes filters (depending on -G|-a)
 
     $(basename $0) sets cgroups limits for a given "group" and assign processes 
@@ -179,7 +183,7 @@ while getopts "C:DG:adlp?" OPT; do
     G) group=$OPTARG ; all_groups=0  ;;
     a) all_groups=1  ;;
     d) process_diskgroups=1 ;;
-    l) list_limits=1 ;;
+	l) list_limits=1 ;;
     p) process_processes=1 ;;
     ?) usage ; exit 0 ;;
   esac
@@ -208,7 +212,7 @@ fi
 for group in $groups ;
 do
   debug "group: $group"
-  if [[ $process_diskgroups -eq 1 ]]  || [[ $list_limits -eq 1 ]]
+  if [[ $process_diskgroups -eq 1 ]] || [[ $list_limits -eq 1 ]]
   then
     something_todo=1
 
@@ -235,7 +239,7 @@ do
       debug "limit: $limit"
       # set limit
       [[ $process_diskgroups -eq 1 ]]  && set_limit $subsystem $group $file $limit
-      [[ $list_limits -eq 1 ]]         && show_limit $subsystem $group $file $limit
+	  [[ $list_limits -eq 1 ]]         && show_limit $subsystem $group $file $limit
     done
   done
 
@@ -244,7 +248,7 @@ do
 # $2 <= file
 # $3 <= limit
 
-  fi  
+  fi
 
   if [[ $process_processes -eq 1 ]]
   then
@@ -267,7 +271,6 @@ do
     done
 
   fi
-
 
   [[ $something_todo -eq 1 ]] || msg "diskgroup $group - nothing to do"
 
